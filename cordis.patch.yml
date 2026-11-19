@@ -1,0 +1,10 @@
+# dsh bundle patch — 把一个插件行插入 profile 的层栈。
+# 安装后（dsh plugin --profile <name> add <本目录>）本包会被识别为 bundle，
+# 这一行即插即用；行 id 固定为 greasyfork，便于在 cordis.patch.yml 里覆盖 config。
+- insert:
+    - id: greasyfork
+      name: 'dsh-greasyfork'
+      config:
+        site: https://greasyfork.org
+        locale: en
+        timeoutMs: 30000

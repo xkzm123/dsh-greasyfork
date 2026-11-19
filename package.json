@@ -1,0 +1,49 @@
+{
+  "name": "dsh-greasyfork",
+  "version": "1.0.0",
+  "description": "GreasyFork 发布/更新插件：把用户脚本像 git push 一样推上 GreasyFork（发布新脚本、发布新版本、预检元数据、凭证安全存储）。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./cli": "./lib/cli.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-greasyfork": "./lib/cli.js"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "scripts",
+    "examples",
+    "README.md",
+    "README.zh.md"
+  ],
+  "scripts": {
+    "test": "node --test --test-isolation=none test/all.test.js",
+    "test:live": "node --test --test-isolation=none test/live-readonly.test.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "greasyfork",
+    "userscript",
+    "tampermonkey"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+node_modules/
+.greasyfork/
+credentials.json
+cookie.txt
+*.log
+.DS_Store
