@@ -146,6 +146,8 @@ greasyfork_auth(action="status")
 | `GET /api/greasyfork/helper.user.js` | 生成并下发助手脚本（token 校验） |
 | `GET /api/greasyfork/snippet` | 控制台片段 |
 
+除 `/beacon`（跨源但要求 `token`）之外，其余路由都只按同源使用，**不返回 CORS 头**——否则任意网页都能读到 `helperToken` 并覆盖你的凭证。`/beacon` 的 token 由宿主每次启动随机生成，只出现在本机设置页和助手脚本里。
+
 ### 3.1 拿到 Cookie（手动方式的细节）
 
 1. 浏览器登录 <https://greasyfork.org>

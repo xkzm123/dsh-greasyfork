@@ -139,6 +139,8 @@ test('status：没有凭证时返回未配置与存储路径', async () => {
     assert.match(data.storage, /greasyfork[\\/]credentials\.json$/)
     assert.ok(data.helperToken)
     assert.match(data.loginUrl, /greasyfork\.org/)
+    // 同源接口不该开放跨源读取：否则任意网页都能拿到 helperToken
+    assert.equal(res.headers['access-control-allow-origin'], undefined)
   })
 })
 
