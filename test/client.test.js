@@ -115,12 +115,12 @@ test('client bundle：面板能渲染出两种获取方式与状态区', async (
   const tree = component({})
   const text = JSON.stringify(tree)
   assert.ok(text.includes('GreasyFork'))
-  assert.ok(text.includes('方式 A'))
-  assert.ok(text.includes('方式 B'))
-  assert.ok(text.includes('安装 Cookie 助手'))
+  assert.ok(text.includes('自动获取'))
+  assert.ok(text.includes('打开浏览器登录并自动获取'))
+  assert.ok(text.includes('手动填入'))
   assert.ok(text.includes('保存并校验'))
-  assert.ok(text.includes('打开登录页'))
-  assert.ok(text.includes('当前状态'))
+  assert.ok(text.includes('不用装油猴脚本'))
+  assert.ok(text.includes('凭证位置'))
 })
 
 test('client bundle：没有 slots 服务时安静退出', async () => {

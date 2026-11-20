@@ -112,33 +112,34 @@ greasyfork_auth(action="status")
 
 ### 3.0 在 Harness 设置页里配置（推荐）
 
-安装并重启后，**设置 → GreasyFork** 会多出一个配置区，提供两种获取方式：
+安装并重启后，**设置 → GreasyFork** 会多出一个配置区。主按钮是「打开浏览器登录并自动获取」，**不需要安装任何油猴脚本**：
 
-**方式 A · 浏览器登录后自动获取**
+1. 点按钮 → 插件用调试端口启动一个浏览器窗口，打开 GreasyFork 登录页
+2. 你在那个窗口里正常登录（首次需要，之后长期有效）
+3. 登录一完成，插件自己把 `_greasyfork_session` 读回来、校验、保存，面板自动变绿
 
-1. 点「打开登录页」——用**系统默认浏览器**打开 `https://greasyfork.org/users/sign_in`
-2. 点「安装 Cookie 助手」——打开一个 `.user.js`，Tampermonkey / Violentmonkey 弹出安装确认（只需一次）
-3. 回到 greasyfork.org 任意页面，右下角出现「把 Cookie 交给 DSH」按钮，点一下
-4. 助手脚本把 Cookie **复制到剪贴板**，同时 POST 回本机插件；设置面板 3 秒内自动变成「已配置 · 有效（账号 …）」
+浏览器用的是固定的专用 profile：`~/.dsh/greasyfork/browser-profile`。所以只有**第一次**要登录，之后每次都是秒级完成；这个 profile 和你日常用的浏览器互不影响。
 
-**方式 B · 手动填入**
+**为什么不能直接读你正在用的浏览器？**（本机实测，三条路都堵死）
 
-- 「从剪贴板粘贴」把剪贴板内容填进输入框，或直接 `Ctrl+V`
-- 「复制控制台片段」拿一段 DevTools 用的 JS（见下方说明）
-- 点「保存并校验」——先打一次真实登录校验，通过才落盘
+| 方案 | 结果 |
+| --- | --- |
+| 页面 JS / DevTools 控制台 `document.cookie` | 读不到：`_greasyfork_session` 带 `HttpOnly` |
+| 直接解 Chrome/Edge 的 Cookie 数据库 | 读不到：Chrome/Edge 127+ 改成 App-Bound 加密（本机 1383 条 cookie 全是 `v20`），DPAPI 解不开，`browser_cookie3` 这类库在新版上直接失效 |
+| Electron 的 `session.cookies` | 不可用：dsh 宿主是 Electron 主进程 spawn 出来的**子 Node 进程**，插件里 `import('electron')` 拿不到 |
 
-> **为什么"自动获取"要靠一个用户脚本？**
-> GreasyFork 的 `_greasyfork_session` 是 **HttpOnly** Cookie（线上 `Set-Cookie` 实测带 `httponly`），
-> 所以浏览器控制台里的 `document.cookie` **读不到**它；而现代 Chrome/Edge 的 Cookie 数据库是
-> App-Bound 加密（v20），外部进程也解不开。真正能"一键拿到"的只有用户脚本身份的
-> `GM_cookie`（Tampermonkey 的 cookies API）——这也正好是 GreasyFork 用户人手一个的东西。
-> 控制台片段仍然提供，但它只抓得到非 HttpOnly 的 Cookie，界面上会如实写明这一点。
+所以走 DevTools Protocol：**由插件启动的浏览器**自己把 Cookie 报给插件（`Network.getAllCookies`，HttpOnly 也会返回）。这是唯一"零脚本"的自动化路径。
 
-设置页里的每个动作都打到宿主路由（`/api/greasyfork/*`），没有新的对外权限：
+> 备选：面板里还留着「手动填入」（DevTools → Application → Cookies 复制），以及给已经装了用户脚本管理器的人用的助手脚本通道（`GM_cookie`）。两条都不影响主流程。
+
+设置页里的每个动作都打到宿主路由（`/api/greasyfork/*`）：
 
 | 路由 | 作用 |
 | --- | --- |
-| `GET /api/greasyfork/status` | 凭证状态、来源、账号、Cookie 名（不含值） |
+| `GET /api/greasyfork/status` | 凭证状态、来源、账号、Cookie 名（不含值）、采集进度 |
+| `POST /api/greasyfork/capture/start` | 启动浏览器并开始自动采集 |
+| `GET /api/greasyfork/capture/status` | 采集进度（running / done / timeout / error） |
+| `POST /api/greasyfork/capture/cancel` | 取消采集并关掉那个浏览器 |
 | `POST /api/greasyfork/credential` | 校验并保存手动填入的 Cookie |
 | `POST /api/greasyfork/beacon` | 助手脚本回传 Cookie（需 `token`，仅本机 UI 可见） |
 | `POST /api/greasyfork/verify` / `clear` | 重新校验 / 删除本地凭证 |
@@ -146,7 +147,9 @@ greasyfork_auth(action="status")
 | `GET /api/greasyfork/helper.user.js` | 生成并下发助手脚本（token 校验） |
 | `GET /api/greasyfork/snippet` | 控制台片段 |
 
-除 `/beacon`（跨源但要求 `token`）之外，其余路由都只按同源使用，**不返回 CORS 头**——否则任意网页都能读到 `helperToken` 并覆盖你的凭证。`/beacon` 的 token 由宿主每次启动随机生成，只出现在本机设置页和助手脚本里。
+除 `/beacon`（跨源但要求 `token`）之外，其余路由都只按同源使用，**不返回 CORS 头**——否则任意网页都能读到 `helperToken` 并覆盖你的凭证。
+
+> **1.1.0 面板显示 `not found` 的原因**：那版在 `apply()` 里直接 `ctx.get('webServer')`，此时 webServer 服务往往还没就绪，路由静默没注册，请求落到了 SPA 的 404。现在改成 `ctx.inject(['webServer'], …)`，服务就绪后再挂路由，并有回归测试守着（`test/plugin.test.js`）。
 
 ### 3.1 拿到 Cookie（手动方式的细节）
 
@@ -373,7 +376,7 @@ greasyfork_push(file="examples/demo.user.js", mode="prefill")
 ## 8. 测试
 
 ```bash
-# 全量（64 个用例，离线，不需要账号）
+# 全量（84 个用例，离线，不需要账号）
 npm test
 
 # 线上只读冒烟（只读公开 JSON，不登录不写）
@@ -390,6 +393,7 @@ GREASYFORK_LIVE=1 npm run test:live
 | `test/publish.test.js` | **本地仿真 GreasyFork**（`test/mock-greasyfork.mjs`）上的端到端：新建、更新、可见性沿用、版本冲突重试、reCAPTCHA、prefill、会话失效、Cloudflare、dry-run、sync |
 | `test/plugin.test.js` | 用最小 cordis ctx 桩跑 `apply()`：4 个工具注册、schema 形状、工具级端到端、"输出不含 Cookie 原文"断言 |
 | `test/settings.test.js` | 设置页宿主路由：状态/保存/校验失败不落盘/beacon token 校验/助手脚本内容与 token/清除/CORS 预检 |
+| `test/browser.test.js` | 浏览器采集：候选路径、超时/取消/启动失败、**对着仿真 CDP 服务真跑一遍 WebSocket + `Network.getAllCookies`**（含 HttpOnly 与 Storage 回退） |
 | `test/client.test.js` | 在 `vm` 里加载 `lib/client.js`（假 React + 假 slots）：注册 `settings.section`、id/label 正确、面板能渲染出两种获取方式、无 slots 时安静退出 |
 | `test/live-readonly.test.js` | 线上只读冒烟（默认跳过） |
 
@@ -436,18 +440,20 @@ node lib/cli.js push --file examples/demo.user.js
 ├── lib/
 │   ├── index.js            # 插件入口：4 个工具 + 配置 + 凭证接线 + 设置页路由
 │   ├── client.js           # 设置页（浏览器半边）：设置 → GreasyFork 配置区
-│   ├── settings.js         # 设置页宿主半边：/api/greasyfork/* 路由 + 助手脚本生成
+│   ├── settings.js         # 设置页宿主半边：/api/greasyfork/* 路由 + 采集状态机
 │   ├── cli.js              # CLI：auth / status / preflight / push
 │   └── core/
 │       ├── client.js       # GreasyFork HTTP 客户端（cookie 罐、CSRF、表单、prefill、sync）
 │       ├── meta.js         # 元数据解析 + 站点规则校验
 │       ├── version.js      # split_version / compare_versions 移植
 │       ├── publish.js      # prepare → execute 编排
+│       ├── browser.js      # 不用油猴脚本的采集：启动调试端口浏览器 + CDP 读 Cookie
 │       ├── credentials.js  # 凭证解析与 0600 存储
 │       └── errors.js       # 错误码 + 处理建议
 ├── scripts/install.mjs     # 安装进任意 profile（含 desktop）
+├── scripts/capture-selftest.mjs  # 一条命令自测"浏览器自动获取"是否可用
 ├── examples/               # 示例脚本（首次发布 / 更新）
-└── test/                   # 64 个离线用例 + 本地 GreasyFork 仿真
+└── test/                   # 84 个离线用例 + 本地 GreasyFork 仿真
 ```
 
 ---

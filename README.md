@@ -34,12 +34,23 @@ Then restart dsh (desktop app: fully quit and relaunch).
 
 ## Configure once (Settings → GreasyFork)
 
-After install, **Settings → GreasyFork** adds a panel with two ways to get the credential:
+After install, **Settings → GreasyFork** adds a panel whose main button is **"Open browser and capture automatically"** — **no userscript required**:
 
-- **Browser login + helper script** — opens the GreasyFork login page in your default browser, then installs a tiny userscript (`GM_cookie`) that copies the cookie to your clipboard and posts it back to the plugin; the panel flips to "configured" within seconds. A userscript is required because `_greasyfork_session` is **HttpOnly** (console `document.cookie` cannot see it, and modern Chrome/Edge cookie DBs are App-Bound encrypted).
-- **Manual paste** — textarea, clipboard button, and a DevTools snippet (honestly labelled: it only sees non-HttpOnly cookies).
+1. The plugin launches a browser with a DevTools port (dedicated profile at `~/.dsh/greasyfork/browser-profile`) on the GreasyFork login page.
+2. You log in there (first time only; the profile persists).
+3. The plugin reads `_greasyfork_session` over CDP (`Network.getAllCookies`, so HttpOnly included), verifies it, saves it, and closes the browser.
 
-The panel talks to `/api/greasyfork/*` host routes (status / credential / beacon / verify / clear / open-login / helper.user.js / snippet).
+Why not read the browser you already use? `_greasyfork_session` is **HttpOnly** (page JS and DevTools console cannot see it), Chrome/Edge 127+ encrypt their cookie DB with App-Bound Encryption (every cookie on this machine is `v20`, so DPAPI-based tools like `browser_cookie3` no longer work), and Electron's `session.cookies` is out of reach because the dsh host runs in a child Node process, not the Electron main process. A browser the plugin launches is the only zero-script automated path.
+
+Fallbacks kept: manual paste (DevTools → Application → Cookies) and an optional helper userscript (`GM_cookie`) for people who already run Tampermonkey.
+
+Host routes: `/api/greasyfork/{status,capture/start,capture/status,capture/cancel,credential,beacon,verify,clear,open-login,helper.user.js,snippet}`.
+
+Self-test the capture path on your machine with one command:
+
+```bash
+node scripts/capture-selftest.mjs --timeout 120
+```
 
 ## Configure once (CLI)
 

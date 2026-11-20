@@ -67,6 +67,60 @@ test('插件导出形状符合 cordis 约定', async () => {
   assert.equal(mod.default.name, 'greasyfork')
 })
 
+test('设置页路由：等 webServer 就绪后才注册（回归 1.1.0 的 not found）', async () => {
+  const registered = []
+  const fakeServer = {
+    port: 16435,
+    register(route) {
+      registered.push(route)
+      return () => {}
+    }
+  }
+  const injected = []
+  const ctx = {
+    tools: { register() {} },
+    get() {
+      return undefined // apply 时机 webServer 还没就绪
+    },
+    logger() {
+      return { info() {}, error() {}, warn() {} }
+    },
+    effect(fn) {
+      fn()
+    },
+    inject(deps, cb) {
+      injected.push(deps)
+      const scoped = {
+        get: (name) => (name === 'webServer' ? fakeServer : undefined),
+        effect(fn) {
+          fn()
+        },
+        logger() {
+          return { info() {}, error() {}, warn() {} }
+        }
+      }
+      cb(scoped)
+    }
+  }
+  apply(ctx, { site: 'https://greasyfork.org', apiSite: 'https://api.greasyfork.org' })
+  assert.deepEqual(injected, [['webServer']])
+  const paths = registered.map((r) => r.path)
+  assert.ok(paths.includes('/api/greasyfork/status'), `注册到的路由：${paths.join(', ')}`)
+  assert.ok(paths.includes('/api/greasyfork/capture/start'))
+})
+
+test('没有 webServer 时安静跳过，不影响工具注册', () => {
+  const tools = new Map()
+  const ctx = {
+    tools: { register: (d) => tools.set(d.name, d) },
+    get: () => undefined,
+    logger: () => ({ info() {}, error() {}, warn() {} }),
+    effect: (fn) => fn()
+  }
+  assert.doesNotThrow(() => apply(ctx, {}))
+  assert.equal(tools.size, 4)
+})
+
 test('注册四个工具且 schema 形状正确', () => {
   const { tools } = makePlugin({ url: 'http://127.0.0.1:1', apiUrl: 'http://127.0.0.1:1/api' })
   assert.deepEqual([...tools.keys()].sort(), ['greasyfork_auth', 'greasyfork_preflight', 'greasyfork_push', 'greasyfork_status'])
