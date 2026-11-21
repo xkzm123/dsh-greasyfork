@@ -10,12 +10,15 @@ import {
   captureCookieViaBrowser,
   closeBrowser,
   cookiesToHeader,
+  defaultBrowserId,
   findBrowser,
-  readCookies
+  readCookies,
+  resolveBrowser
 } from '../lib/core/browser.js'
 import { startFakeCdp } from './fake-cdp.mjs'
 
 const FAKE_BROWSER = { id: 'edge', name: 'Microsoft Edge', path: '/fake/msedge' }
+const resolveTo = (browser = FAKE_BROWSER, isDefault = true) => async () => ({ browser, isDefault, defaultId: browser?.id ?? null })
 
 test('browserCandidates 覆盖 Edge / Chrome，且路径带可执行文件名', () => {
   const win = browserCandidates('win32', { PROGRAMFILES: 'C:/PF', 'PROGRAMFILES(X86)': 'C:/PF86', LOCALAPPDATA: 'C:/LA' })
@@ -54,13 +57,14 @@ test('captureCookieViaBrowser：读到 session 就返回完整 Cookie 头并关�
   const result = await captureCookieViaBrowser({
     dshHome: '/tmp/dsh',
     site: 'https://greasyfork.org',
-    findBrowserFn: async () => FAKE_BROWSER,
+    resolveBrowserFn: resolveTo(),
     launchFn: async () => ({}),
     waitFn: async () => ({ Browser: 'Edg/1' }),
     readFn: async () => [
       { name: '_greasyfork_session', value: 'session-1', httpOnly: true },
       { name: 'cf_clearance', value: 'cf-1' }
     ],
+    verify: async () => ({ authenticated: true, username: 'tester' }),
     closeFn: async () => {
       closed += 1
     },
@@ -70,6 +74,9 @@ test('captureCookieViaBrowser：读到 session 就返回完整 Cookie 头并关�
   assert.equal(result.ok, true)
   assert.equal(result.cookie, '_greasyfork_session=session-1; cf_clearance=cf-1')
   assert.equal(result.browser, 'Microsoft Edge')
+  assert.equal(result.username, 'tester')
+  assert.equal(result.verified, true)
+  assert.equal(result.isDefault, true)
   assert.equal(closed, 1)
 })
 
@@ -77,7 +84,7 @@ test('captureCookieViaBrowser：没有浏览器时给出 no-browser', async () =
   const result = await captureCookieViaBrowser({
     dshHome: '/tmp/dsh',
     site: 'https://greasyfork.org',
-    findBrowserFn: async () => null
+    resolveBrowserFn: resolveTo(null, false)
   })
   assert.equal(result.ok, false)
   assert.equal(result.reason, 'no-browser')
@@ -88,7 +95,7 @@ test('captureCookieViaBrowser：启动失败给出 launch-failed', async () => {
   const result = await captureCookieViaBrowser({
     dshHome: '/tmp/dsh',
     site: 'https://greasyfork.org',
-    findBrowserFn: async () => FAKE_BROWSER,
+    resolveBrowserFn: resolveTo(),
     launchFn: async () => {
       throw new Error('spawn EPERM')
     }
@@ -103,10 +110,11 @@ test('captureCookieViaBrowser：等不到登录会超时，并且仍然关掉浏
   const result = await captureCookieViaBrowser({
     dshHome: '/tmp/dsh',
     site: 'https://greasyfork.org',
-    findBrowserFn: async () => FAKE_BROWSER,
+    resolveBrowserFn: resolveTo(),
     launchFn: async () => ({}),
     waitFn: async () => ({ Browser: 'Edg/1' }),
     readFn: async () => [{ name: 'locale_messaged', value: 'true' }],
+    verify: async () => ({ authenticated: false }),
     closeFn: async () => {
       closed += 1
     },
@@ -123,7 +131,7 @@ test('captureCookieViaBrowser：读 cookie 报错时继续轮询而不是直接�
   const result = await captureCookieViaBrowser({
     dshHome: '/tmp/dsh',
     site: 'https://greasyfork.org',
-    findBrowserFn: async () => FAKE_BROWSER,
+    resolveBrowserFn: resolveTo(),
     launchFn: async () => ({}),
     waitFn: async () => ({ Browser: 'Edg/1' }),
     readFn: async () => {
@@ -143,7 +151,7 @@ test('captureCookieViaBrowser：shouldStop 立即取消', async () => {
   const result = await captureCookieViaBrowser({
     dshHome: '/tmp/dsh',
     site: 'https://greasyfork.org',
-    findBrowserFn: async () => FAKE_BROWSER,
+    resolveBrowserFn: resolveTo(),
     launchFn: async () => ({}),
     waitFn: async () => ({ Browser: 'Edg/1' }),
     readFn: async () => [],
@@ -188,4 +196,78 @@ test('readCookies：端口上没有 CDP 时抛错（由上层轮询兜住）', a
 
 test('closeBrowser：对不存在的端口安静返回', async () => {
   await assert.doesNotReject(() => closeBrowser(1))
+})
+
+test('captureCookieViaBrowser：匿名 session 不算成功，登录后才返回', async () => {
+  let reads = 0
+  const phases = []
+  const result = await captureCookieViaBrowser({
+    dshHome: '/tmp/dsh',
+    site: 'https://greasyfork.org',
+    resolveBrowserFn: resolveTo(),
+    launchFn: async () => ({}),
+    waitFn: async () => ({ Browser: 'Edg/1' }),
+    readFn: async () => {
+      reads += 1
+      return [{ name: '_greasyfork_session', value: 'anonymous-' + reads }]
+    },
+    verify: async (cookie) =>
+      cookie.includes('anonymous-1') || cookie.includes('anonymous-2')
+        ? { authenticated: false }
+        : { authenticated: true, username: 'real-user' },
+    onPhase: (info) => phases.push(info.phase),
+    closeFn: async () => {},
+    timeoutMs: 3000,
+    intervalMs: 1
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.username, 'real-user')
+  assert.ok(reads >= 3, `应该多轮之后才成功，实际读了 ${reads} 轮`)
+  assert.ok(phases.includes('waiting-login'), `阶段：${phases.join(',')}`)
+  assert.ok(phases.includes('verifying'))
+})
+
+test('captureCookieViaBrowser：一直没登录时超时消息要说明"检测到会话但没登录"', async () => {
+  const result = await captureCookieViaBrowser({
+    dshHome: '/tmp/dsh',
+    site: 'https://greasyfork.org',
+    resolveBrowserFn: resolveTo(),
+    launchFn: async () => ({}),
+    waitFn: async () => ({ Browser: 'Edg/1' }),
+    readFn: async () => [{ name: '_greasyfork_session', value: 'anonymous' }],
+    verify: async () => ({ authenticated: false }),
+    closeFn: async () => {},
+    timeoutMs: 30,
+    intervalMs: 5
+  })
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'timeout')
+  assert.equal(result.sawAnonymous, true)
+  assert.match(result.message, /登录/)
+})
+
+test('defaultBrowserId：解析 Windows 默认浏览器的 ProgId', async () => {
+  const fake = (progId) => async () => ({ stdout: `HKEY_CURRENT_USER\\...\\UserChoice\r\n    ProgId    REG_SZ    ${progId}\r\n` })
+  assert.equal(await defaultBrowserId('win32', fake('MSEdgeHTM')), 'edge')
+  assert.equal(await defaultBrowserId('win32', fake('ChromeHTML')), 'chrome')
+  assert.equal(await defaultBrowserId('win32', fake('FirefoxURL-308046B0AF4A39CB')), 'firefox')
+  assert.equal(await defaultBrowserId('win32', fake('BraveHTML')), null)
+  assert.equal(await defaultBrowserId('linux'), null)
+  assert.equal(
+    await defaultBrowserId('win32', async () => {
+      throw new Error('reg missing')
+    }),
+    null
+  )
+})
+
+test('resolveBrowser：默认浏览器在候选里就优先返回，并标记 isDefault', async () => {
+  // 用本机真实候选路径做一次只读解析：只要机器上装了 Edge 或 Chrome 就能断言
+  const resolved = await resolveBrowser({ platform: process.platform, env: process.env, defaultId: null })
+  if (!resolved.browser) return // 无 Chromium 的机器跳过
+  assert.equal(typeof resolved.browser.path, 'string')
+  assert.equal(resolved.isDefault, false)
+  const withDefault = await resolveBrowser({ platform: process.platform, env: process.env, defaultId: resolved.browser.id })
+  assert.equal(withDefault.browser.id, resolved.browser.id)
+  assert.equal(withDefault.isDefault, true)
 })

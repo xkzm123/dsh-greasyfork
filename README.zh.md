@@ -114,11 +114,13 @@ greasyfork_auth(action="status")
 
 安装并重启后，**设置 → GreasyFork** 会多出一个配置区。主按钮是「打开浏览器登录并自动获取」，**不需要安装任何油猴脚本**：
 
-1. 点按钮 → 插件用调试端口启动一个浏览器窗口，打开 GreasyFork 登录页
+1. 点按钮 → 插件启动**系统默认浏览器**（Windows 读注册表里的 https 关联；不是 Chromium 系时退到 Edge/Chrome）的一个独立窗口，打开 GreasyFork 登录页
 2. 你在那个窗口里正常登录（首次需要，之后长期有效）
-3. 登录一完成，插件自己把 `_greasyfork_session` 读回来、校验、保存，面板自动变绿
+3. 登录一完成，插件自己把 `_greasyfork_session` 读回来、**真的打一次登录校验**、保存，面板自动变绿
 
-浏览器用的是固定的专用 profile：`~/.dsh/greasyfork/browser-profile`。所以只有**第一次**要登录，之后每次都是秒级完成；这个 profile 和你日常用的浏览器互不影响。
+浏览器用的是固定的专用 profile：`~/.dsh/greasyfork/browser-profile-<浏览器>`。所以只有**第一次**要登录，之后每次都是秒级完成；这个 profile 和你日常用的浏览器互不影响。
+
+> **一个容易踩的坑**：GreasyFork 对**未登录访客**也会下发一个 `_greasyfork_session`（匿名会话）。所以"读到 session"不等于"登录成功"——插件每一轮都会拿它去 `/users/edit`、`/users/webhook-info` 验一次，只有校验通过才保存。面板会显示当前阶段（`浏览器已打开，请在窗口里登录` → `检测到登录，正在校验` → 完成）。
 
 **为什么不能直接读你正在用的浏览器？**（本机实测，三条路都堵死）
 
@@ -137,8 +139,8 @@ greasyfork_auth(action="status")
 | 路由 | 作用 |
 | --- | --- |
 | `GET /api/greasyfork/status` | 凭证状态、来源、账号、Cookie 名（不含值）、采集进度 |
-| `POST /api/greasyfork/capture/start` | 启动浏览器并开始自动采集 |
-| `GET /api/greasyfork/capture/status` | 采集进度（running / done / timeout / error） |
+| `POST /api/greasyfork/capture/start` | 启动默认浏览器并开始自动采集 |
+| `GET /api/greasyfork/capture/status` | 采集进度（phase：launching / waiting / waiting-login / verifying / done） |
 | `POST /api/greasyfork/capture/cancel` | 取消采集并关掉那个浏览器 |
 | `POST /api/greasyfork/credential` | 校验并保存手动填入的 Cookie |
 | `POST /api/greasyfork/beacon` | 助手脚本回传 Cookie（需 `token`，仅本机 UI 可见） |

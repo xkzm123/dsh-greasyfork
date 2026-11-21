@@ -1,6 +1,6 @@
 {
   "name": "dsh-greasyfork",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "GreasyFork 发布/更新插件：把用户脚本像 git push 一样推上 GreasyFork（设置页一键配置凭证、发布新脚本、发布新版本）。",
   "type": "module",
   "main": "lib/index.js",

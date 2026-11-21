@@ -289,7 +289,7 @@ test('非 GET/POST 方法返回 405', async () => {
 
 test('capture：没有浏览器时返回 409 与可操作提示', async () => {
   await withHome(async () => {
-    const s = surface(null, { findBrowserFn: async () => null })
+    const s = surface(null, { resolveBrowserFn: async () => ({ browser: null, isDefault: false, defaultId: null }) })
     const res = await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
     assert.equal(res.statusCode, 409)
     assert.equal(res.json().code, 'E_NO_BROWSER')
@@ -304,14 +304,17 @@ test('capture：启动后进入 running，采集成功则自动保存并变 done
       released = resolve
     })
     const s = surface(null, {
-      findBrowserFn: async () => ({ id: 'edge', name: 'Microsoft Edge', path: 'x' }),
+      resolveBrowserFn: async () => ({ browser: { id: 'edge', name: 'Microsoft Edge', path: 'x' }, isDefault: true, defaultId: 'edge' }),
       capture: async () => {
         await gate
         return {
           ok: true,
           cookie: '_greasyfork_session=good; cf_clearance=cf',
+          username: 'tester',
+          userId: 7,
           browser: 'Microsoft Edge',
           profile: '/tmp/profile',
+          verified: true,
           elapsedMs: 1200
         }
       }
@@ -342,7 +345,7 @@ test('capture：启动后进入 running，采集成功则自动保存并变 done
 test('capture：采集失败（超时）会变成 timeout 且不写凭证', async () => {
   await withHome(async () => {
     const s = surface(null, {
-      findBrowserFn: async () => ({ id: 'edge', name: 'Edge', path: 'x' }),
+      resolveBrowserFn: async () => ({ browser: { id: 'edge', name: 'Edge', path: 'x' }, isDefault: true, defaultId: 'edge' }),
       capture: async () => ({ ok: false, reason: 'timeout', message: '等待登录超时', elapsedMs: 300000 })
     })
     await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
@@ -353,16 +356,24 @@ test('capture：采集失败（超时）会变成 timeout 且不写凭证', asyn
   })
 })
 
-test('capture：读到 cookie 但登录校验不通过时不落盘', async () => {
+test('capture：浏览器里只有匿名会话（没登录）时不落盘，状态为 timeout', async () => {
   await withHome(async () => {
     const s = surface({ authenticated: false }, {
-      findBrowserFn: async () => ({ id: 'edge', name: 'Edge', path: 'x' }),
-      capture: async () => ({ ok: true, cookie: '_greasyfork_session=stale', browser: 'Edge', elapsedMs: 10 })
+      resolveBrowserFn: async () => ({ browser: { id: 'edge', name: 'Edge', path: 'x' }, isDefault: true, defaultId: 'edge' }),
+      capture: async () => ({
+        ok: false,
+        reason: 'timeout',
+        sawAnonymous: true,
+        message: '检测到 GreasyFork 的会话，但 300 秒内没有完成登录。',
+        browser: 'Edge',
+        elapsedMs: 300000
+      })
     })
     await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
     await new Promise((r) => setTimeout(r, 20))
     const view = await call(route(s, '/api/greasyfork/capture/status'), { url: '/api/greasyfork/capture/status' })
-    assert.equal(view.json().capture.state, 'error')
+    assert.equal(view.json().capture.state, 'timeout')
+    assert.match(view.json().capture.message, /登录/)
     assert.equal(await readCredentialFile(), undefined)
   })
 })
@@ -370,7 +381,7 @@ test('capture：读到 cookie 但登录校验不通过时不落盘', async () =>
 test('capture：cancel 把状态置为 cancelled', async () => {
   await withHome(async () => {
     const s = surface(null, {
-      findBrowserFn: async () => ({ id: 'edge', name: 'Edge', path: 'x' }),
+      resolveBrowserFn: async () => ({ browser: { id: 'edge', name: 'Edge', path: 'x' }, isDefault: true, defaultId: 'edge' }),
       capture: () => new Promise(() => {})
     })
     await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
