@@ -1,6 +1,6 @@
 {
   "name": "dsh-greasyfork",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "GreasyFork 发布/更新插件：读自己的脚本与版本、发布新脚本、发新版本、改简介、站内搜索、查账号信息；凭证只手写录入，不驱动任何浏览器。",
   "type": "module",
   "main": "lib/index.js",
