@@ -5,3 +5,4 @@ cookie.txt
 *.log
 .DS_Store
 *.zip
+*.tgz
