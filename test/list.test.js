@@ -44,7 +44,7 @@ test('parseScriptVersion：能取到列表里的版本号', () => {
 })
 
 test('listPath：四种 scope 的路径', () => {
-  assert.equal(listPath({ scope: 'mine', userId: 1482629, userName: 'xkzm123' }), '/users/1482629-xkzm123')
+  assert.equal(listPath({ scope: 'mine', userId: 12345, userName: 'someone' }), '/users/12345-someone')
   assert.equal(listPath({ scope: 'popular' }), '/scripts?sort=total_installs&page=1')
   assert.equal(listPath({ scope: 'popular', page: 3 }), '/scripts?sort=total_installs&page=3')
   assert.equal(listPath({ scope: 'libraries' }), '/scripts/libraries')
