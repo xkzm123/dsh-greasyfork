@@ -1,6 +1,6 @@
 /**
  * 插件层测试：用最小 cordis ctx 桩把 index.js 跑起来，验证
- *   - 四个工具都注册了，且参数/输出 schema 形状符合 dsh-tools 的约定
+ *   - 六个工具都注册了，且参数/输出 schema 形状符合 dsh-tools 的约定
  *   - 工具调用能端到端打到 GreasyFork（这里是本地仿真服务）
  *   - 任何输出里都不会出现 Cookie 原文
  */
@@ -54,7 +54,8 @@ function makePlugin(mock, credentials) {
     apiSite: mock.apiUrl,
     locale: 'en',
     timeoutMs: 5000,
-    defaultScriptType: 'public'
+    defaultScriptType: 'public',
+    browser: false
   })
   return { tools, logs }
 }
@@ -106,7 +107,8 @@ test('设置页路由：等 webServer 就绪后才注册（回归 1.1.0 的 not 
   assert.deepEqual(injected, [['webServer']])
   const paths = registered.map((r) => r.path)
   assert.ok(paths.includes('/api/greasyfork/status'), `注册到的路由：${paths.join(', ')}`)
-  assert.ok(paths.includes('/api/greasyfork/capture/start'))
+  assert.ok(paths.includes('/api/greasyfork/parse'))
+  assert.ok(!paths.includes('/api/greasyfork/capture/start'), '自动获取路由已移除')
 })
 
 test('没有 webServer 时安静跳过，不影响工具注册', () => {
@@ -118,12 +120,19 @@ test('没有 webServer 时安静跳过，不影响工具注册', () => {
     effect: (fn) => fn()
   }
   assert.doesNotThrow(() => apply(ctx, {}))
-  assert.equal(tools.size, 4)
+  assert.equal(tools.size, 6)
 })
 
-test('注册四个工具且 schema 形状正确', () => {
+test('注册六个工具且 schema 形状正确', () => {
   const { tools } = makePlugin({ url: 'http://127.0.0.1:1', apiUrl: 'http://127.0.0.1:1/api' })
-  assert.deepEqual([...tools.keys()].sort(), ['greasyfork_auth', 'greasyfork_preflight', 'greasyfork_push', 'greasyfork_status'])
+  assert.deepEqual([...tools.keys()].sort(), [
+    'greasyfork_auth',
+    'greasyfork_guide',
+    'greasyfork_list',
+    'greasyfork_preflight',
+    'greasyfork_push',
+    'greasyfork_status'
+  ])
   for (const [name, def] of tools) {
     assert.equal(typeof def.description, 'string', `${name} 缺 description`)
     assert.ok(def.description.length > 20, `${name} description 太短`)
@@ -146,6 +155,9 @@ test('注册四个工具且 schema 形状正确', () => {
 test('greasyfork_preflight 在没有凭证时退化为纯本地校验', async () => {
   const previous = process.env.GREASYFORK_COOKIE
   delete process.env.GREASYFORK_COOKIE
+  // 本机可能已经存了真实凭证，必须隔离掉 DSH_HOME 才能测"没有凭证"
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = `${process.cwd()}/.tmp-no-credential`
   try {
     const { tools } = makePlugin({ url: 'http://127.0.0.1:1', apiUrl: 'http://127.0.0.1:1/api' })
     const result = await tools.get('greasyfork_preflight').execute({ code: GOOD }, execFor(process.cwd()))
@@ -154,6 +166,8 @@ test('greasyfork_preflight 在没有凭证时退化为纯本地校验', async ()
     assert.equal(result.summary.name, 'Demo Script')
   } finally {
     if (previous !== undefined) process.env.GREASYFORK_COOKIE = previous
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
   }
 })
 

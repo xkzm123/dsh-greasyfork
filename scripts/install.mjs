@@ -151,7 +151,7 @@ async function copyIntoProfile(dir) {
   const target = join(dir, 'node_modules', PACKAGE_NAME)
   await rm(target, { recursive: true, force: true })
   await mkdir(target, { recursive: true })
-  for (const entry of ['lib', 'scripts', 'examples', 'cordis.patch.yml', 'package.json', 'README.md', 'README.zh.md']) {
+  for (const entry of ['lib', 'scripts', 'examples', 'cordis.patch.yml', 'package.json']) {
     const from = join(packageDir, entry)
     if (!(await exists(from))) continue
     await cp(from, join(target, entry), { recursive: true })

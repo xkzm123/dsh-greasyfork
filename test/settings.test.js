@@ -1,5 +1,5 @@
 /**
- * 设置页宿主半边的测试：路由行为、助手脚本内容、凭证校验与落盘。
+ * 设置页宿主半边的测试：路由行为、凭证校验与落盘。
  * 不联网：probe（登录校验）由测试注入。
  */
 
@@ -8,11 +8,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import {
-  buildConsoleSnippet,
-  buildHelperUserscript,
-  createSettingsSurface
-} from '../lib/settings.js'
+import { createSettingsSurface } from '../lib/settings.js'
 import { readCredentialFile } from '../lib/core/credentials.js'
 
 function fakeReq({ method = 'GET', url = '/', headers = {}, body } = {}) {
@@ -85,11 +81,19 @@ const CONFIG = {
   userAgent: 'test'
 }
 
+const FAKE_RESOLVED = {
+  browser: { id: 'edge', name: 'Microsoft Edge', path: 'x' },
+  isDefault: true,
+  defaultId: 'edge',
+  detected: { id: 'edge', name: 'Microsoft Edge', path: 'x', chromium: true }
+}
+
 function surface(probeResult, extra = {}) {
   const ctx = { webServer: { port: 16435 } }
   return createSettingsSurface({
     ctx,
     config: CONFIG,
+    resolveBrowserFn: async () => FAKE_RESOLVED,
     probe: async (cookie) =>
       probeResult ?? (cookie.includes('good')
         ? { authenticated: true, username: 'tester', userId: 7 }
@@ -104,32 +108,6 @@ function route(s, path) {
   return found.handler
 }
 
-test('助手脚本：包含 token、回传地址、GM_cookie 与站点匹配', () => {
-  const script = buildHelperUserscript({
-    origin: 'http://127.0.0.1:16435',
-    token: 'tok-abc',
-    site: 'https://greasyfork.org'
-  })
-  assert.match(script, /\/\/ ==UserScript==/)
-  assert.match(script, /@match {2,}https:\/\/greasyfork\.org\/\*/)
-  assert.match(script, /@grant\s+GM_cookie/)
-  assert.match(script, /@grant\s+GM_setClipboard/)
-  assert.match(script, /@grant\s+GM_xmlhttpRequest/)
-  assert.match(script, /@connect\s+127\.0\.0\.1/)
-  assert.ok(script.includes('http://127.0.0.1:16435/api/greasyfork/beacon'))
-  assert.ok(script.includes('"tok-abc"'))
-  // 不能把 token 写成裸标识符拼进 JS（必须 JSON 转义）
-  assert.ok(script.includes('var TOKEN = "tok-abc"'))
-})
-
-test('控制台片段：如实说明 HttpOnly，且不依赖 DevTools 的 copy()', () => {
-  const snippet = buildConsoleSnippet({ origin: 'http://127.0.0.1:16435' })
-  assert.match(snippet, /HttpOnly/)
-  // 页面里没有 copy()，必须用 textarea + execCommand 复制
-  assert.match(snippet, /execCommand\('copy'\)/)
-  assert.ok(!/\bcopy\(all\)/.test(snippet))
-})
-
 test('status：没有凭证时返回未配置与存储路径', async () => {
   await withHome(async () => {
     const s = surface()
@@ -140,9 +118,8 @@ test('status：没有凭证时返回未配置与存储路径', async () => {
     assert.equal(data.configured, false)
     assert.equal(data.valid, false)
     assert.match(data.storage, /greasyfork[\\/]credentials\.json$/)
-    assert.ok(data.helperToken)
-    assert.match(data.loginUrl, /greasyfork\.org/)
-    // 同源接口不该开放跨源读取：否则任意网页都能拿到 helperToken
+    assert.equal(data.expiry, null)
+    // 同源接口不该开放跨源读取
     assert.equal(res.headers['access-control-allow-origin'], undefined)
   })
 })
@@ -196,54 +173,6 @@ test('credential：校验通过后落盘，status 变成已配置', async () => 
   })
 })
 
-test('beacon：token 不对 403；token 正确则保存', async () => {
-  await withHome(async () => {
-    const s = surface()
-    const bad = await call(route(s, '/api/greasyfork/beacon'), {
-      method: 'POST',
-      body: { token: 'wrong', cookie: '_greasyfork_session=good' }
-    })
-    assert.equal(bad.statusCode, 403)
-
-    const ok = await call(route(s, '/api/greasyfork/beacon'), {
-      method: 'POST',
-      body: { token: s.token, cookie: '_greasyfork_session=good' }
-    })
-    assert.equal(ok.statusCode, 200)
-    assert.equal(ok.json().username, 'tester')
-    assert.equal((await readCredentialFile()).cookie, '_greasyfork_session=good')
-  })
-})
-
-test('beacon：预检请求带 CORS 头', async () => {
-  await withHome(async () => {
-    const s = surface()
-    const res = await call(route(s, '/api/greasyfork/beacon'), { method: 'OPTIONS' })
-    assert.equal(res.statusCode, 204)
-    assert.equal(res.headers['access-control-allow-origin'], '*')
-  })
-})
-
-test('helper.user.js：token 正确才下发脚本', async () => {
-  await withHome(async () => {
-    const s = surface()
-    const denied = await call(route(s, '/api/greasyfork/helper.user.js'), {
-      url: '/api/greasyfork/helper.user.js?token=nope',
-      headers: { host: '127.0.0.1:16435' }
-    })
-    assert.equal(denied.statusCode, 403)
-
-    const ok = await call(route(s, '/api/greasyfork/helper.user.js'), {
-      url: `/api/greasyfork/helper.user.js?token=${s.token}`,
-      headers: { host: '127.0.0.1:16435' }
-    })
-    assert.equal(ok.statusCode, 200)
-    assert.match(ok.headers['content-type'], /javascript/)
-    assert.ok(ok.body.includes('http://127.0.0.1:16435/api/greasyfork/beacon'))
-    assert.ok(ok.body.includes(s.token))
-  })
-})
-
 test('clear：删除本地凭证', async () => {
   await withHome(async () => {
     const s = surface()
@@ -258,27 +187,6 @@ test('clear：删除本地凭证', async () => {
   })
 })
 
-test('snippet：返回控制台片段', async () => {
-  await withHome(async () => {
-    const s = surface()
-    const res = await call(route(s, '/api/greasyfork/snippet'), { headers: { host: '127.0.0.1:16435' } })
-    assert.equal(res.statusCode, 200)
-    assert.match(res.json().snippet, /HttpOnly/)
-  })
-})
-
-test('open-login：返回官方登录地址（不抛异常）', async () => {
-  await withHome(async () => {
-    const s = surface()
-    const res = await call(route(s, '/api/greasyfork/open-login'), { method: 'POST' })
-    assert.equal(res.statusCode, 200)
-    const data = res.json()
-    assert.equal(data.ok, true)
-    assert.match(data.url, /greasyfork\.org\/en\/users\/sign_in/)
-    assert.equal(typeof data.opened, 'boolean')
-  })
-})
-
 test('非 GET/POST 方法返回 405', async () => {
   await withHome(async () => {
     const s = surface()
@@ -287,105 +195,45 @@ test('非 GET/POST 方法返回 405', async () => {
   })
 })
 
-test('capture：没有浏览器时返回 409 与可操作提示', async () => {
+test('status：Node 端校验抛错时不再把凭证判成"已失效"', async () => {
   await withHome(async () => {
-    const s = surface(null, { resolveBrowserFn: async () => ({ browser: null, isDefault: false, defaultId: null }) })
-    const res = await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
-    assert.equal(res.statusCode, 409)
-    assert.equal(res.json().code, 'E_NO_BROWSER')
-    assert.match(res.json().message, /Chrome|Edge/)
-  })
-})
-
-test('capture：启动后进入 running，采集成功则自动保存并变 done', async () => {
-  await withHome(async () => {
-    let released
-    const gate = new Promise((resolve) => {
-      released = resolve
+    const good = surface()
+    await call(route(good, '/api/greasyfork/credential'), {
+      method: 'POST',
+      body: { cookie: '_greasyfork_session=good' }
     })
-    const s = surface(null, {
-      resolveBrowserFn: async () => ({ browser: { id: 'edge', name: 'Microsoft Edge', path: 'x' }, isDefault: true, defaultId: 'edge' }),
-      capture: async () => {
-        await gate
-        return {
-          ok: true,
-          cookie: '_greasyfork_session=good; cf_clearance=cf',
-          username: 'tester',
-          userId: 7,
-          browser: 'Microsoft Edge',
-          profile: '/tmp/profile',
-          verified: true,
-          elapsedMs: 1200
-        }
+    // 换一个"被 Cloudflare 拦"的 probe，模拟 Node 端打不通
+    const blocked = surface(null, {
+      probe: async () => {
+        throw new Error('E_CLOUDFLARE: 被 Cloudflare 拦截')
       }
     })
-
-    const start = await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
-    assert.equal(start.statusCode, 200)
-    const started = start.json()
-    assert.equal(started.ok, true)
-    assert.equal(started.capture.state, 'running')
-    assert.equal(started.browser, 'Microsoft Edge')
-
-    const running = await call(route(s, '/api/greasyfork/capture/status'), { url: '/api/greasyfork/capture/status' })
-    assert.equal(running.json().capture.state, 'running')
-
-    released()
-    await new Promise((r) => setTimeout(r, 30))
-
-    const done = await call(route(s, '/api/greasyfork/capture/status'), { url: '/api/greasyfork/capture/status' })
-    const payload = done.json()
-    assert.equal(payload.capture.state, 'done')
-    assert.equal(payload.capture.username, 'tester')
-    assert.equal(payload.status.configured, true)
-    assert.equal((await readCredentialFile()).cookie, '_greasyfork_session=good; cf_clearance=cf')
+    const res = await call(route(blocked, '/api/greasyfork/status'), { url: '/api/greasyfork/status?force=1' })
+    const data = res.json()
+    assert.equal(data.configured, true)
+    assert.equal(data.valid, null)
+    assert.match(data.verifyError, /Cloudflare/)
   })
 })
 
-test('capture：采集失败（超时）会变成 timeout 且不写凭证', async () => {
+test('parse：只解析不落盘，并回显识别到的格式', async () => {
   await withHome(async () => {
-    const s = surface(null, {
-      resolveBrowserFn: async () => ({ browser: { id: 'edge', name: 'Edge', path: 'x' }, isDefault: true, defaultId: 'edge' }),
-      capture: async () => ({ ok: false, reason: 'timeout', message: '等待登录超时', elapsedMs: 300000 })
+    const s = surface()
+    const raw = JSON.stringify([
+      { name: '_ga', value: 'GA1.1.1', expirationDate: Math.floor(Date.now() / 1000) + 86400 },
+      { name: '_greasyfork_session', value: 'abc' }
+    ])
+    const res = await call(route(s, '/api/greasyfork/parse'), {
+      method: 'POST',
+      body: { cookie: raw }
     })
-    await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
-    await new Promise((r) => setTimeout(r, 20))
-    const view = await call(route(s, '/api/greasyfork/capture/status'), { url: '/api/greasyfork/capture/status' })
-    assert.equal(view.json().capture.state, 'timeout')
+    const data = res.json()
+    assert.equal(data.ok, true)
+    assert.equal(data.format, 'json')
+    assert.equal(data.cookieCount, 2)
+    assert.equal(data.hasSession, true)
+    assert.equal(data.expiry.sessionScoped, true)
     assert.equal(await readCredentialFile(), undefined)
   })
 })
 
-test('capture：浏览器里只有匿名会话（没登录）时不落盘，状态为 timeout', async () => {
-  await withHome(async () => {
-    const s = surface({ authenticated: false }, {
-      resolveBrowserFn: async () => ({ browser: { id: 'edge', name: 'Edge', path: 'x' }, isDefault: true, defaultId: 'edge' }),
-      capture: async () => ({
-        ok: false,
-        reason: 'timeout',
-        sawAnonymous: true,
-        message: '检测到 GreasyFork 的会话，但 300 秒内没有完成登录。',
-        browser: 'Edge',
-        elapsedMs: 300000
-      })
-    })
-    await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
-    await new Promise((r) => setTimeout(r, 20))
-    const view = await call(route(s, '/api/greasyfork/capture/status'), { url: '/api/greasyfork/capture/status' })
-    assert.equal(view.json().capture.state, 'timeout')
-    assert.match(view.json().capture.message, /登录/)
-    assert.equal(await readCredentialFile(), undefined)
-  })
-})
-
-test('capture：cancel 把状态置为 cancelled', async () => {
-  await withHome(async () => {
-    const s = surface(null, {
-      resolveBrowserFn: async () => ({ browser: { id: 'edge', name: 'Edge', path: 'x' }, isDefault: true, defaultId: 'edge' }),
-      capture: () => new Promise(() => {})
-    })
-    await call(route(s, '/api/greasyfork/capture/start'), { method: 'POST' })
-    const cancelled = await call(route(s, '/api/greasyfork/capture/cancel'), { method: 'POST' })
-    assert.equal(cancelled.json().capture.state, 'cancelled')
-  })
-})

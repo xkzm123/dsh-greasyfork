@@ -1,89 +1,69 @@
 # dsh-greasyfork
 
-Publish userscripts to GreasyFork from DeepSeek Harness the way you push to GitHub: one tool call creates a script or ships a new version, and returns the script URL, version and status.
+把用户脚本像 `git push` 一样推到 [GreasyFork](https://greasyfork.org) 的 DeepSeek Harness 插件。
 
-Chinese documentation (full research notes, install paths, credential handling, error table, test plan): **[README.zh.md](README.zh.md)**
+设置入口：**设置 → GreasyFork**。
 
-## What it gives the model
+## 能做什么
 
-| Tool | Purpose |
+| 工具 | 作用 |
 | --- | --- |
-| `greasyfork_auth` | credential status / one-time `set` / `verify` / `clear` |
-| `greasyfork_preflight` | read-only: parse `==UserScript==` metadata, apply GreasyFork's own validation rules, compare against the live version |
-| `greasyfork_push` | create a script or publish a new version; `dryRun`, `acceptWarnings`, `mode=prefill|sync` |
-| `greasyfork_status` | read-only script + version history lookup (no credential needed) |
+| `greasyfork_list` | 列出自己发布的脚本 / 按关键词搜索站内脚本 / 热门 / 库脚本 |
+| `greasyfork_status` | 读某个脚本的名称、版本、版本历史、作者、链接（不需要登录） |
+| `greasyfork_preflight` | 发布前预检：元数据解析、版本冲突、namespace 变更、体积、@match 数量 |
+| `greasyfork_push` | 发布新脚本、发新版本（带 changelog）、`dryRun` 预览、`sync` 让站点从 GitHub 拉更新 |
+| `greasyfork_auth` | 凭证状态 / 保存 / 校验 / 清除 |
+| `greasyfork_guide` | 内置操作手册 |
 
-## Why form POSTs
-
-GreasyFork has **no write API** (its own help page says so). Publishing is a Rails form POST:
-
-- `POST /:locale/script_versions` — create
-- `POST /:locale/scripts/:id/versions` — new version
-- `POST /:locale/script_versions/prefill` — official degraded path (skips CSRF)
-- `PATCH /:locale/scripts/:id/sync_update` — pull code from a `sync_identifier` URL
-
-So the plugin carries your session cookie (`_greasyfork_session`), scrapes the CSRF token from the real form page, and submits exactly what the browser would. Script name/description/version come from the code's metadata block — which is why preflight validates it locally first.
-
-## Install
+命令行同样可用：
 
 ```bash
-node scripts/install.mjs --profile web        # or --profile desktop
+node lib/cli.js auth status
+node lib/cli.js preflight --file my.user.js
+node lib/cli.js push --file my.user.js --script-type public
+node lib/cli.js push --file my.user.js --script-id 123456 --changelog "修复 X"
 ```
 
-Then restart dsh (desktop app: fully quit and relaunch).
+## 凭证：只手动录入，不驱动浏览器
 
-## Configure once (Settings → GreasyFork)
+2.0 起彻底移除了「自动开浏览器读 Cookie」那条路 —— 它会和用户自己的窗口抢 profile，还会被 Cloudflare 的 Turnstile 卡住。
 
-After install, **Settings → GreasyFork** adds a panel whose main button is **"Open browser and capture automatically"** — **no userscript required**:
+现在的流程：
 
-1. The plugin launches a browser with a DevTools port (dedicated profile at `~/.dsh/greasyfork/browser-profile`) on the GreasyFork login page.
-2. You log in there (first time only; the profile persists).
-3. The plugin reads `_greasyfork_session` over CDP (`Network.getAllCookies`, so HttpOnly included), verifies it, saves it, and closes the browser.
+1. 浏览器装 [Cookie-Editor](https://cookie-editor.com/)（或 EditThisCookie）。
+2. 登录 `greasyfork.org`。
+3. 扩展里点 **Export → JSON**，复制整段内容。
+4. 设置 → GreasyFork → 粘贴 → **校验并保存**。
 
-Why not read the browser you already use? `_greasyfork_session` is **HttpOnly** (page JS and DevTools console cannot see it), Chrome/Edge 127+ encrypt their cookie DB with App-Bound Encryption (every cookie on this machine is `v20`, so DPAPI-based tools like `browser_cookie3` no longer work), and Electron's `session.cookies` is out of reach because the dsh host runs in a child Node process, not the Electron main process. A browser the plugin launches is the only zero-script automated path.
+支持的粘贴格式（都会自动识别）：
 
-Fallbacks kept: manual paste (DevTools → Application → Cookies) and an optional helper userscript (`GM_cookie`) for people who already run Tampermonkey.
+- Cookie-Editor / EditThisCookie 的 JSON 数组
+- JSON 对象 `{ "name": "value" }` 或 `{ "cookies": [...] }`
+- Netscape `cookies.txt`（7 列制表符）
+- DevTools 请求头里的整行 `Cookie: a=1; b=2`
+- 多行 `name=value`
+- 单个 `_greasyfork_session=...`
 
-Host routes: `/api/greasyfork/{status,capture/start,capture/status,capture/cancel,credential,beacon,verify,clear,open-login,helper.user.js,snippet}`.
+凭证写在 `~/.dsh/greasyfork/credentials.json`（权限 0600），不进配置、不进日志，任何工具输出都不会回显原文。
 
-Self-test the capture path on your machine with one command:
+### 有效期
+
+`_greasyfork_session` 是 Rails 的会话 Cookie，站点不下发过期时间，所以插件显示为「会话型」：
+只要不在别的浏览器/设备上重新登录把会话顶掉，它就长期有效。带 `expirationDate` 的导出（如 Cookie-Editor 的 JSON）会显示具体剩余天数。
+
+## 实现要点
+
+- 发布走 GreasyFork 的网页表单（站点没有写接口）：`POST /:locale/script_versions` 与 `POST /:locale/scripts/:id/versions`。
+- `script_version[attachments][]` 是 `params.expect` 的必填键，缺失会让站点直接返回 HTTP 500 —— 插件会显式带上空值。
+- 站点用 Cloudflare，Node 直连偶尔被挑战；此时校验会明确回报「判断不了」而不是「凭证失效」。
+
+## 开发
 
 ```bash
-node scripts/capture-selftest.mjs --timeout 120
+npm test              # 107 个用例，全部离线
+npm run dev:sync      # 把 lib/ 同步到 dsh profile
 ```
 
-## Configure once (CLI)
+## License
 
-```bash
-node lib/cli.js auth set --stdin
-```
-
-Paste `_greasyfork_session=…; cf_clearance=…` from a logged-in browser tab. It is verified before being saved to `~/.dsh/greasyfork/credentials.json` (mode 0600). Alternative sources, in priority order: tool argument → `GREASYFORK_COOKIE` env → harness credential store → that file.
-
-The cookie value never appears in tool output, logs or errors — only cookie *names*. A test asserts this.
-
-## Use
-
-```bash
-node lib/cli.js push --file examples/demo.user.js                 # first publish
-node lib/cli.js push --file examples/demo-update.user.js --script-id 123456 --changelog "…"
-node lib/cli.js push --file examples/demo.user.js --dry-run       # preview only
-```
-
-In chat: `greasyfork_push(file="examples/demo.user.js")`, or `greasyfork_preflight` first to see the summary.
-
-## Test
-
-```bash
-npm test                              # 64 offline cases incl. a local GreasyFork simulator
-GREASYFORK_LIVE=1 npm run test:live   # read-only live smoke test
-```
-
-## Known limits
-
-- New-account **first** script creation may require reCAPTCHA → `mode="prefill"` leaves one browser click; updates never need it.
-- Cloudflare may challenge HTML endpoints → export the full cookie including `cf_clearance`.
-- Account restrictions (unverified email, rate limit, disposable email) surface as `E_RESTRICTED` with the concrete reason.
-- Desktop profile is owned by Electron, so `dsh plugin` refuses it; `scripts/install.mjs` edits the profile directly.
-
-License: MIT
+MIT

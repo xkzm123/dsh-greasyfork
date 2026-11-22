@@ -5,6 +5,8 @@
  */
 
 import './version.test.js'
+import './guide.test.js'
+import './list.test.js'
 import './meta.test.js'
 import './credentials.test.js'
 import './publish.test.js'

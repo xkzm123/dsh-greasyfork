@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bumpVersion, compareVersions, isVersionLike, splitVersion } from '../lib/core/version.js'
+import { bumpVersion, compareVersions, isVersionLike, splitVersion } from '../lib/core/meta.js'
 
 // 这些期望值直接对照 greasyfork/app/models/script_version.rb 的 split_version 行为。
 test('splitVersion 按 GreasyFork 的 4 段规则切分', () => {

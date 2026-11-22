@@ -7,7 +7,9 @@ import {
   CREDENTIAL_ENV,
   clearCredentialFile,
   credentialFilePath,
+  describeCookieExpiry,
   normalizeCookieInput,
+  parseCookieEntries,
   readCredentialFile,
   redactCookie,
   resolveCredential,
@@ -34,7 +36,53 @@ async function withHome(fn) {
 test('normalizeCookieInput 支持整段 Cookie 头与多行', () => {
   assert.equal(normalizeCookieInput('Cookie: a=1; b=2'), 'a=1; b=2')
   assert.equal(normalizeCookieInput('a=1\nb=2\n'), 'a=1; b=2')
-  assert.equal(normalizeCookieInput('  a=1 ;; b=2 ;  '), 'a=1 ; b=2')
+  assert.equal(normalizeCookieInput('  a=1 ;; b=2 ;  '), 'a=1; b=2')
+})
+
+test('parseCookieEntries 支持 Cookie-Editor 的 JSON 导出', () => {
+  const raw = JSON.stringify([
+    { domain: '.greasyfork.org', name: '_ga', value: 'GA1.1.1', expirationDate: 1829891609.26 },
+    { domain: 'greasyfork.org', name: '_greasyfork_session', value: 'abc%3D%3D', session: true }
+  ])
+  const entries = parseCookieEntries(raw)
+  assert.equal(entries.length, 2)
+  assert.equal(entries[1].name, '_greasyfork_session')
+  assert.equal(entries[0].expires, 1829891609.26)
+  assert.equal(entries[1].expires, null)
+  assert.equal(normalizeCookieInput(raw), '_ga=GA1.1.1; _greasyfork_session=abc%3D%3D')
+})
+
+test('parseCookieEntries 支持 Netscape cookies.txt', () => {
+  const raw = [
+    '# Netscape HTTP Cookie File',
+    '.greasyfork.org\tTRUE\t/\tTRUE\t1829891609\t_greasyfork_session\tXYZ',
+    '.greasyfork.org\tTRUE\t/\tFALSE\t0\tlocale_messaged\ttrue'
+  ].join('\n')
+  const entries = parseCookieEntries(raw)
+  assert.equal(entries.length, 2)
+  assert.equal(entries[0].name, '_greasyfork_session')
+  assert.equal(entries[0].expires, 1829891609)
+  assert.equal(entries[1].expires, null)
+})
+
+test('parseCookieEntries 支持 JSON 对象与单值', () => {
+  assert.equal(normalizeCookieInput('{"_greasyfork_session":"abc"}'), '_greasyfork_session=abc')
+  assert.equal(normalizeCookieInput('_greasyfork_session=abc'), '_greasyfork_session=abc')
+  assert.equal(parseCookieEntries('随便一段不是 cookie 的文字').length, 0)
+})
+
+test('describeCookieExpiry 能算出剩余天数与会话型标记', () => {
+  const future = Math.floor(Date.now() / 1000) + 10 * 86400
+  const withExpiry = describeCookieExpiry([
+    { name: '_greasyfork_session', value: 'a', expires: future },
+    { name: '_ga', value: 'b', expires: future }
+  ])
+  assert.equal(withExpiry.sessionScoped, false)
+  assert.equal(withExpiry.daysLeft, 10)
+
+  const sessionOnly = describeCookieExpiry([{ name: '_greasyfork_session', value: 'a', expires: null }])
+  assert.equal(sessionOnly.sessionScoped, true)
+  assert.equal(sessionOnly.daysLeft, null)
 })
 
 test('redactCookie 只暴露名字', () => {

@@ -1,7 +1,7 @@
 {
   "name": "dsh-greasyfork",
-  "version": "1.2.1",
-  "description": "GreasyFork 发布/更新插件：把用户脚本像 git push 一样推上 GreasyFork（设置页一键配置凭证、发布新脚本、发布新版本）。",
+  "version": "2.0.0",
+  "description": "GreasyFork 发布/更新插件：读自己的脚本与版本、发布新脚本、发新版本、改简介、站内搜索、查账号信息；凭证只手写录入，不驱动任何浏览器。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -19,15 +19,21 @@
     "cordis.patch.yml",
     "scripts",
     "examples",
-    "README.md",
-    "README.zh.md"
+    "assets"
   ],
   "scripts": {
     "test": "node --test --test-isolation=none test/all.test.js",
-    "test:live": "node --test --test-isolation=none test/live-readonly.test.js"
+    "test:live": "node --test --test-isolation=none test/live-readonly.test.js",
+    "dev:sync": "node scripts/dev-sync.mjs",
+    "dev:watch": "node scripts/dev-sync.mjs --watch"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.0.0",
+    "dsh": ">=0.2.1-rc.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xkzm123/dsh-greasyfork.git"
   },
   "keywords": [
     "dsh",
